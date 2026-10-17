@@ -114,6 +114,44 @@ jobs:
           jf api "metadata/api/v1/system/ping" --server-id=$SERVER_ID
           echo -e "\nCatalog check complete."
 
+      - name: Catalog Service Sanity & Package GraphQL Query
+        run: |
+          echo "=== 11. Catalog Service Ping ==="
+          jf api "catalog/api/v1/system/ping" --server-id=$SERVER_ID || \
+          jf api "metadata/api/v1/system/ping" --server-id=$SERVER_ID
+          echo -e "\nCatalog health check complete."
+
+          echo "=== 12. Querying Packages via Catalog GraphQL API ==="
+          GRAPHQL_QUERY='query {
+          publicPackages {
+          searchPackageVersions(
+          first: 100
+          where: {
+          publicPackageVersionIn: [
+           { type: "nuget", name: "system.security.cryptography.xml", version: "8.0.5" }
+           { type: "nuget", name: "newtonsoft.json", version: "13.0.3" }
+           { type: "nuget", name: "system.text.json", version: "8.0.5" }
+           ]
+           }
+           ) {
+           edges {
+           node {
+           version
+           publishedAt
+           }
+           }
+           }
+           }
+           }'
+
+           jf api /catalog/api/v1/public/graphql \
+           --server-id $SERVER_ID \
+           --method POST \
+           --header "Content-Type: application/json" \
+           --header "Accept: application/json" \
+           --data "$(jq -n --arg query "$GRAPHQL_QUERY" '{query: $query}')"
+
+           echo -e "\nCatalog GraphQL package check complete."
       # ----------------------------------------------------
       # 8. CLEANUP
       # ----------------------------------------------------
