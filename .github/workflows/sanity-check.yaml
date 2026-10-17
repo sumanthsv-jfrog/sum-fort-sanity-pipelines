@@ -35,7 +35,7 @@ jobs:
           oidc-provider-name: cba-github-oidc
           oidc-audience: cba-github-oidc
           custom-server-id: ${{ env.SERVER_ID }}
-          version: 2.127.0
+          version: 2.125.0
       # ----------------------------------------------------
       # 2. ARTIFACTORY & ROUTER PING CHECKS
       # ----------------------------------------------------
