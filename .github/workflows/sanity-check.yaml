@@ -1,0 +1,126 @@
+name: JFrog Platform Sanity Checks (OIDC + Maven JAR Scan)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target Repository for Sanity Tests'
+        required: true
+        default: 'jfrog-sanity-check'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  JF_URL: 'http://sum2.jfps.team/'
+  OIDC_INTEGRATION_NAME: 'gh-oidc'
+  SERVER_ID: 'psblr-jfrog'
+  REPO_KEY: ${{ github.event.inputs.target_repo || 'jfrog-sanity-check' }}
+  JAR_NAME: 'commons-collections-3.2.1.jar'
+  JAR_URL: 'https://repo1.maven.org/maven2/commons-collections/commons-collections/3.2.1/commons-collections-3.2.1.jar'
+
+jobs:
+  jfrog-oidc-sanity-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JFrog CLI for source (nondocker)
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ env.JF_URL }}
+        with:
+          oidc-provider-name: cba-github-oidc
+          oidc-audience: cba-github-oidc
+          custom-server-id: ${{ env.SERVER_ID }}
+          version: 2.127.0
+      # ----------------------------------------------------
+      # 2. ARTIFACTORY & ROUTER PING CHECKS
+      # ----------------------------------------------------
+      - name: Artifactory & Router Ping Checks
+        run: |
+          echo "=== 1. Artifactory Native Ping ==="
+          jf rt ping --server-id=$SERVER_ID
+
+          echo "=== 2. Router Readiness Check via jf api ==="
+          jf api "router/api/v1/system/readiness" --server-id=$SERVER_ID
+          echo -e "\nRouter is ready."
+
+      # ----------------------------------------------------
+      # 3. TARGET REPOSITORY VERIFICATION
+      # ----------------------------------------------------
+      - name: Verify Repository Access ($REPO_KEY)
+        run: |
+          echo "=== 3. Checking Repository Status ==="
+          jf rt curl -sS "api/repositories/$REPO_KEY" --server-id=$SERVER_ID
+          echo -e "\nRepository $REPO_KEY is active and accessible."
+
+      # ----------------------------------------------------
+      # 4. DOWNLOAD MAVEN JAR & TEST ARTIFACT LIFECYCLE
+      # ----------------------------------------------------
+      - name: Artifact Lifecycle Test (JAR Upload/Download/Verify)
+        run: |
+          echo "=== 4. Fetching Public Maven JAR ==="
+          curl -sS -L "$JAR_URL" -o $JAR_NAME
+
+          echo "=== 5. Uploading JAR to Artifactory ==="
+          jf rt upload $JAR_NAME $REPO_KEY/$JAR_NAME --server-id=$SERVER_ID
+
+          echo "=== 6. Downloading JAR from Artifactory ==="
+          jf rt download $REPO_KEY/$JAR_NAME downloaded-$JAR_NAME --flat --server-id=$SERVER_ID
+
+          echo "=== 7. Verifying Checksum Integrity ==="
+          ORIGINAL_HASH=$(sha256sum $JAR_NAME | awk '{print $1}')
+          DOWNLOADED_HASH=$(sha256sum downloaded-$JAR_NAME | awk '{print $1}')
+
+          echo "Original SHA256:   $ORIGINAL_HASH"
+          echo "Downloaded SHA256: $DOWNLOADED_HASH"
+
+          if [ "$ORIGINAL_HASH" != "$DOWNLOADED_HASH" ]; then
+            echo "::error:: File integrity check failed! Hashes do not match."
+            exit 1
+          fi
+          echo "File upload/download verification passed."
+
+      # ----------------------------------------------------
+      # 5. XRAY HEALTH CHECK
+      # ----------------------------------------------------
+      - name: Xray Health Check
+        run: |
+          echo "=== 8. Xray System Version ==="
+          jf xr curl -sS "api/v1/system/version" --server-id=$SERVER_ID
+          echo -e "\nXray version check completed."
+
+      # ----------------------------------------------------
+      # 6. SCAN JAR ARTIFACT VIA XRAY & JAS
+      # ----------------------------------------------------
+      - name: Security Scan & Violation Status Check
+        run: |
+          echo "=== 9. Scanning Uploaded JAR via 'jf scan' ==="
+          jf scan "$REPO_KEY/$JAR_NAME" --server-id=$SERVER_ID || \
+          echo "::warning:: Scan returned findings or pending indexing."
+
+          echo "=== 10. Checking Violation / Block Status via 'jf xr status' ==="
+          jf xr status "$REPO_KEY/$JAR_NAME" --server-id=$SERVER_ID || true
+
+      # ----------------------------------------------------
+      # 7. CATALOG SERVICE HEALTH CHECK
+      # ----------------------------------------------------
+      - name: Catalog Service Sanity Check
+        run: |
+          echo "=== 11. Catalog Service Ping ==="
+          jf api "catalog/api/v1/system/ping" --server-id=$SERVER_ID || \
+          jf api "metadata/api/v1/system/ping" --server-id=$SERVER_ID
+          echo -e "\nCatalog check complete."
+
+      # ----------------------------------------------------
+      # 8. CLEANUP
+      # ----------------------------------------------------
+      - name: Cleanup Test Artifacts
+        if: always()
+        run: |
+          echo "=== 12. Cleaning Up Test JAR from Artifactory ==="
+          jf rt delete "$REPO_KEY/$JAR_NAME" --quiet --server-id=$SERVER_ID || true
+          echo "Cleanup completed."
