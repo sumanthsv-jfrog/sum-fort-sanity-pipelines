@@ -27,7 +27,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup JFrog CLI for source (nondocker)
+      - name: Setup JFrog CLI for source
         uses: jfrog/setup-jfrog-cli@v4
         env:
           JF_URL: ${{ env.JF_URL }}
@@ -35,7 +35,6 @@ jobs:
           oidc-provider-name: cba-github-oidc
           oidc-audience: cba-github-oidc
           custom-server-id: ${{ env.SERVER_ID }}
-          version: 2.125.0
       # ----------------------------------------------------
       # 2. ARTIFACTORY & ROUTER PING CHECKS
       # ----------------------------------------------------
